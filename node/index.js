@@ -18,7 +18,7 @@ const node = await createLibp2p({
   peerId,
   addresses: {
     listen: [`/ip4/0.0.0.0/tcp/${process.env.PORT}`],
-    announce: [`/ip4/${EXTERNAL_IP}/tcp/${process.env.PORT}`],
+    announce: [`/ip4/${process.env.EXTERNAL_IP}/tcp/${process.env.PORT}`],
   },
   transports: [
     circuitRelayTransport({
