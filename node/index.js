@@ -15,6 +15,7 @@ import * as lp from 'it-length-prefixed'
 import map from 'it-map'
 import * as multiaddr from "@multiformats/multiaddr";
 import http from 'http'
+import { makeGetReq } from "./client.js";
 
 const seedBytes = Uint8Array.from({ length: 32, 0: process.env.SEED });
 const secret = await generateKeyPairFromSeed("ed25519", seedBytes);
@@ -23,7 +24,7 @@ const peerId = await createFromPrivKey(secret);
 const node = await createLibp2p({
   peerId,
   addresses: {
-    listen: [`/ip4/0.0.0.0/tcp/${process.env.PORT}/http`, `/ip4/0.0.0.0/tcp/5000`],
+    listen: [`/ip4/0.0.0.0/tcp/${process.env.PORT}`],
     announce: [`/ip4/${process.env.EXTERNAL_IP}/tcp/${process.env.PORT}`,
     `/ip4/${process.env.EXTERNAL_IP}/tcp/5000`],
   },
@@ -53,30 +54,31 @@ await node.handle('/dialerlistener', async ({ stream }) => {
     (source) => map(source, (buf) => uint8ArrayToString(buf.subarray())),
     async function (source) {
       for await (var message of source) {
-        const options = {
-          hostname: "localhost",
-          port: 5000,
-          path: '/',
-          method: 'GET'
-        };
-        console.log('making get to', options)
-        // Send the GET request
-        http.get("http://localhost:5000", async (res) => {
-          let data = '';
-          res.on('data', (chunk) => {
-            data += chunk;
-          });
-          res.on('end', async () => {
-            console.log('Response:', data);
-            await pipe(
-              [data],
-              // Turn strings into buffers
-              (source) => map(source, (string) => uint8ArrayFromString(string)),
-              // Encode with length prefix (so receiving side knows how much data is coming)
-              (source) => lp.encode(source),
-              stream.sink);
-          });
-        });
+        // const options = {
+        //   hostname: "localhost",
+        //   port: 5000,
+        //   path: '/',
+        //   method: 'GET'
+        // };
+        // console.log('making get to', options)
+        // // Send the GET request
+        // http.get("http://localhost:5000", async (res) => {
+        //   let data = '';
+        //   res.on('data', (chunk) => {
+        //     data += chunk;
+        //   });
+        //   res.on('end', async () => {
+        //     console.log('Response:', data);
+        //     await pipe(
+        //       [data],
+        //       // Turn strings into buffers
+        //       (source) => map(source, (string) => uint8ArrayFromString(string)),
+        //       // Encode with length prefix (so receiving side knows how much data is coming)
+        //       (source) => lp.encode(source),
+        //       stream.sink);
+        //   });
+        // });
+        makeGetReq(stream);
       }
     }
   )
@@ -95,6 +97,7 @@ setInterval(async () => {
 }, 5000);
 
 if (process.env.MODE === "dialer") {
+  let requestOnce = false;
   setInterval(async () => {
     const addr = multiaddr.multiaddr(
       `${process.env.RELAY_MULTIADDR}/p2p-circuit/p2p/${process.env.LISTENER_PEER_ID}`
@@ -103,26 +106,31 @@ if (process.env.MODE === "dialer") {
       const conn = await node.dial(addr);
 
       console.log(`Connected to the auto relay node via ${conn.remoteAddr.toString()}`)
-      const stream = await node.dialProtocol(addr, '/dialerlistener');
-      // Write data to the stream
-      await pipe(
-        ["Making request from Dialer"],
-        // Turn strings into buffers
-        (source) => map(source, (string) => uint8ArrayFromString(string)),
-        // Encode with length prefix (so receiving side knows how much data is coming)
-        (source) => lp.encode(source),
-        stream.sink);
-      await pipe(
-        stream.source,
-        // Decode length-prefixed data
-        (source) => lp.decode(source),
-        // Turn buffers into strings
-        (source) => map(source, (buf) => uint8ArrayToString(buf.subarray())),
-        async function (source) {
-          for await (var res of source) {
-            console.log('response', res)
-          }
-        })
+      if (conn.transient == false && !requestOnce) {
+        requestOnce = true;
+        const stream = await node.dialProtocol(addr, '/dialerlistener');
+        // Write data to the stream
+        await pipe(
+          ["Making request from Dialer"],
+          // Turn strings into buffers
+          (source) => map(source, (string) => uint8ArrayFromString(string)),
+          // Encode with length prefix (so receiving side knows how much data is coming)
+          (source) => lp.encode(source),
+          stream.sink);
+
+        // download file
+        await pipe(
+          stream.source,
+          // Decode length-prefixed data
+          (source) => lp.decode(source),
+          // Turn buffers into strings
+          (source) => map(source, (buf) => uint8ArrayToString(buf.subarray())),
+          async function (source) {
+            for await (var res of source) {
+              console.log('response', JSON.parse(res))
+            }
+          })
+      }
     } catch (error) {
       console.error("cannot connect to ", addr);
       console.error(error);
