@@ -58,6 +58,7 @@ app.get('/requestFile', async (req, res) => {
     //   await setTimeout(100);
     //   console.log('waiting for pay')
     // }
+    await setTimeout(1000);   // NEEDED
     
     let bytesRead;
     let bytesProcessed = 0; // Track the total bytes processed
@@ -73,7 +74,7 @@ app.get('/requestFile', async (req, res) => {
       bytesProcessed += bytesRead;
     }
     
-    console.log('sent chunk')
+    console.log('sent chunk', bytesProcessed)
     res.write(buffer.slice(0, bytesProcessed)); // Write the chunk data to the response stream
     // consumerPayment[consumerID][fileHash] = false;
 

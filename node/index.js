@@ -7,7 +7,7 @@ import { tcp } from "@libp2p/tcp";
 import { createLibp2p } from "libp2p";
 import { identify } from "@libp2p/identify";
 import { generateKeyPairFromSeed } from "@libp2p/crypto/keys";
-import { server } from "./server.js";
+import { app } from "./server.js";
 import { pipe } from 'it-pipe'
 import { fromString as uint8ArrayFromString } from 'uint8arrays/from-string'
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
@@ -16,6 +16,11 @@ import map from 'it-map'
 import * as multiaddr from "@multiformats/multiaddr";
 import http from 'http'
 import { makeGetReq } from "./client.js";
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const seedBytes = Uint8Array.from({ length: 32, 0: process.env.SEED });
 const secret = await generateKeyPairFromSeed("ed25519", seedBytes);
@@ -45,7 +50,53 @@ const node = await createLibp2p({
 });
 
 node.start();
-await node.handle('/dialerlistener', async ({ stream }) => {
+let sendFile = 0;
+let multi;
+await node.handle('/dialerlistener', async ({ connection, stream }) => {
+  multi = connection.remoteAddr
+  sendFile = 1;
+
+  // await pipe(
+  //   stream.source,
+  //   // Decode length-prefixed data
+  //   (source) => lp.decode(source),
+  //   // Turn buffers into strings
+  //   (source) => map(source, (buf) => uint8ArrayToString(buf.subarray())),
+  //   async function (source) {
+  //     for await (var message of source) {
+  //       const options = {
+  //         hostname: "localhost",
+  //         port: 5000,
+  //         path: '/',
+  //         method: 'GET'
+  //       };
+  //       console.log('making get to', options)
+  //       // Send the GET request
+  //       http.get("http://localhost:5000", async (res) => {
+  //         let data = '';
+  //         res.on('data', (chunk) => {
+  //           data += chunk;
+  //         });
+  //         res.on('end', async () => {
+  //           console.log('Response:', data);
+  //           await pipe(
+  //             [data],
+  //             // Turn strings into buffers
+  //             (source) => map(source, (string) => uint8ArrayFromString(string)),
+  //             // Encode with length prefix (so receiving side knows how much data is coming)
+  //             (source) => lp.encode(source),
+  //             stream.sink);
+  //         });
+  //       });
+  //     }
+  //   }
+  // )
+})
+
+const filePath = path.join(__dirname, `giraffe.jpg`);
+const fileStream = fs.createWriteStream(filePath);
+await node.handle('/file', async ({ connection, stream }) => {
+  // download file
   await pipe(
     stream.source,
     // Decode length-prefixed data
@@ -53,35 +104,16 @@ await node.handle('/dialerlistener', async ({ stream }) => {
     // Turn buffers into strings
     (source) => map(source, (buf) => uint8ArrayToString(buf.subarray())),
     async function (source) {
-      for await (var message of source) {
-        // const options = {
-        //   hostname: "localhost",
-        //   port: 5000,
-        //   path: '/',
-        //   method: 'GET'
-        // };
-        // console.log('making get to', options)
-        // // Send the GET request
-        // http.get("http://localhost:5000", async (res) => {
-        //   let data = '';
-        //   res.on('data', (chunk) => {
-        //     data += chunk;
-        //   });
-        //   res.on('end', async () => {
-        //     console.log('Response:', data);
-        //     await pipe(
-        //       [data],
-        //       // Turn strings into buffers
-        //       (source) => map(source, (string) => uint8ArrayFromString(string)),
-        //       // Encode with length prefix (so receiving side knows how much data is coming)
-        //       (source) => lp.encode(source),
-        //       stream.sink);
-        //   });
-        // });
-        makeGetReq(stream);
+      for await (var res of source) {
+        const buffer = JSON.parse(res)['chunk']['data']
+        if (buffer && buffer.length > 0) {
+          console.log('writing')
+          fileStream.write(Buffer.from(buffer));
+        }
+        console.log('response', JSON.parse(res))
+        if (JSON.parse(res)['type'] == 'end') {fileStream.end();}
       }
-    }
-  )
+    })
 })
 
 console.warn(`node started with peer id ${node.peerId.toString()}`);
@@ -94,6 +126,10 @@ setInterval(async () => {
       return conn.remoteAddr.toString() + connectionType;
     })
   );
+  if (sendFile == 1) {
+    sendFile = 0;
+    makeGetReq(multi, node);
+  }
 }, 5000);
 
 if (process.env.MODE === "dialer") {
@@ -109,27 +145,7 @@ if (process.env.MODE === "dialer") {
       if (conn.transient == false && !requestOnce) {
         requestOnce = true;
         const stream = await node.dialProtocol(addr, '/dialerlistener');
-        // Write data to the stream
-        await pipe(
-          ["Making request from Dialer"],
-          // Turn strings into buffers
-          (source) => map(source, (string) => uint8ArrayFromString(string)),
-          // Encode with length prefix (so receiving side knows how much data is coming)
-          (source) => lp.encode(source),
-          stream.sink);
 
-        // download file
-        await pipe(
-          stream.source,
-          // Decode length-prefixed data
-          (source) => lp.decode(source),
-          // Turn buffers into strings
-          (source) => map(source, (buf) => uint8ArrayToString(buf.subarray())),
-          async function (source) {
-            for await (var res of source) {
-              console.log('response', JSON.parse(res))
-            }
-          })
       }
     } catch (error) {
       console.error("cannot connect to ", addr);
@@ -153,3 +169,8 @@ if (process.env.MODE === "dialer") {
 
 // $env:SEED =0; $env:MODE="listener"; $env:RELAY_MULTIADDR="/ip4/52.191.209.254/tcp/3000/p2p/12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n"; $env:PORT=3000;$env:EXTERNAL_IP="72.229.181.210"; node .\index.js
 // $env:SEED =1; $env:MODE="dialer"; $env:LISTENER_PEER_ID="12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN" ;$env:RELAY_MULTIADDR="/ip4/52.191.209.254/tcp/3000/p2p/12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n"; $env:PORT=3000;$env:EXTERNAL_IP="172.174.239.70"; node .\index.js
+
+// $env:SEED =0; $env:MODE="listener"; $env:RELAY_MULTIADDR="/ip4/52.191.209.254/tcp/3000/p2p/12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n"; $env:PORT=3000;$env:EXTERNAL_IP="172.174.239.70"; node .\index.js
+// $env:SEED =1; $env:MODE="dialer"; $env:LISTENER_PEER_ID="12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN" ;$env:RELAY_MULTIADDR="/ip4/52.191.209.254/tcp/3000/p2p/12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n"; $env:PORT=3000;$env:EXTERNAL_IP="72.229.181.210"; node .\index.js
+
+

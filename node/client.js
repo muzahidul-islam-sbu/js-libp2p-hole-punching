@@ -13,12 +13,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const fileHash = 'giraffe.jpg'
 const peerID = 'user1'
-const serverUrl = `http://127.0.0.1:500/requestFile`;
+const serverUrl = `http://127.0.0.1:5000/requestFile`;
 const payUrl = `http://52.191.209.254:3000/sendTransaction?fileHash=${fileHash}&peerID=${peerID}`; // URL of the file to download
 
 let pay = 0
 
-export function makeGetReq(stream) {
+export function makeGetReq(multi, node) {
     http.get(serverUrl, async (response) => {
         if (response.statusCode !== 200) {
             console.error(`Failed to download file. Server responded with status code ${response.statusCode}`);
@@ -36,7 +36,7 @@ export function makeGetReq(stream) {
         let accumulatedChunks = Buffer.alloc(0); // Buffer to accumulate partial chunks
         let totalBytesReceived = 0; // Track the total bytes received
 
-        // const fileStream = fs.createWriteStream(filePath);
+        const fileStream = fs.createWriteStream(filePath);
 
         response.on('data', async (chunk) => {
             // Accumulate received chunks
@@ -46,12 +46,13 @@ export function makeGetReq(stream) {
             // Check if accumulated size matches the desired chunk size
             if (totalBytesReceived >= desiredChunkSize) {
                 // Write accumulated chunks to the file stream
-                // fileStream.write(accumulatedChunks);
+                fileStream.write(accumulatedChunks);
                 const data = {
                     type: 'data',
                     filename,
                     chunk: accumulatedChunks
                 }
+                const stream = await node.dialProtocol(multi, '/file');
                 await pipe(
                     [JSON.stringify(data)],
                     // Turn strings into buffers
@@ -59,6 +60,7 @@ export function makeGetReq(stream) {
                     // Encode with length prefix (so receiving side knows how much data is coming)
                     (source) => lp.encode(source),
                     stream.sink);
+                await stream.close();
                 console.log('Received chunk of size:', accumulatedChunks.length);
                 // sendConfirmation();
 
@@ -71,12 +73,13 @@ export function makeGetReq(stream) {
         response.on('end', async () => {
             // Write remaining accumulated chunks to the file stream
             if (accumulatedChunks.length > 0) {
-                // fileStream.write(accumulatedChunks);
+                fileStream.write(accumulatedChunks);
                 const data = {
                     type: 'end',
                     filename,
                     chunk: accumulatedChunks
                 }
+                const stream = await node.dialProtocol(multi, '/file');
                 await pipe(
                     [JSON.stringify(data)],
                     // Turn strings into buffers
@@ -84,11 +87,12 @@ export function makeGetReq(stream) {
                     // Encode with length prefix (so receiving side knows how much data is coming)
                     (source) => lp.encode(source),
                     stream.sink);
+                await node.hangUp(multi);
                 console.log('Received chunk of size:', accumulatedChunks.length);
             }
 
             // Close the file stream when all data has been received
-            // fileStream.end();
+            fileStream.end();
             // sendConfirmation()
             console.log('File downloaded successfully');
         });
