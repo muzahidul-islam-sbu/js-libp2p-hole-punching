@@ -6,6 +6,7 @@ import { tcp } from "@libp2p/tcp";
 import { createLibp2p } from "libp2p";
 import { identify } from "@libp2p/identify";
 import { generateKeyPairFromSeed } from "@libp2p/crypto/keys";
+import http from 'http'
 
 const seedBytes = Uint8Array.from({ length: 32, 0: 9999 });
 const secret = await generateKeyPairFromSeed("ed25519", seedBytes);
@@ -39,6 +40,29 @@ relay.addEventListener("peer:connect", (event) => {
 setInterval(() => {
   console.warn(
     "connections: ",
-    relay.getConnections().map((conn) => conn.remoteAddr.toString())
+    relay.getConnections().map((conn) => {
+      const addr = conn.remoteAddr.toString()
+      // const parts = addr.split('/')
+      // console.log(parts)
+      // const options = {
+      //   hostname: parts[2],
+      //   port: parseInt(parts[4]),
+      //   path: '/',
+      //   method: 'GET'
+      // };
+      // console.log('making get to', options)
+      // // Send the GET request
+      // http.request(options, (res) => {
+      //   let data = '';
+      //   res.on('data', (chunk) => {
+      //       data += chunk;
+      //   });
+      //   res.on('end', () => {
+      //       console.log('Response:', data);
+      //   });
+      // });
+
+      return addr
+  })
   );
 }, 5000);
